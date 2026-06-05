@@ -76,8 +76,16 @@ const exactLookup = new Map<string, string>(
 )
 
 /**
- * Levenshtein con terminación temprana: si la distancia mínima posible de la
- * fila actual ya supera `maxDist`, se aborta en O(1) en lugar de continuar O(m×n).
+ * Distancia de edición Damerau-Levenshtein (variante OSA) con terminación
+ * temprana. A diferencia de Levenshtein puro, una transposición de caracteres
+ * ADYACENTES cuenta como UNA sola edición. Esto es clave porque el typo más
+ * común al teclear es justamente intercambiar dos letras seguidas:
+ *   "Arauoc"→"Arauco", "Victorai"→"Victoria", "cuirco"→"Curico"
+ * (Levenshtein los considera distancia 2 y se escapaban del umbral; con OSA
+ * son distancia 1 y se corrigen.)
+ *
+ * Si la distancia mínima posible de la fila ya supera `maxDist`, aborta antes.
+ * Se conserva el nombre `levenshtein` por compatibilidad con los llamadores.
  */
 export function levenshtein(a: string, b: string, maxDist = Infinity): number {
   const m = a.length
@@ -85,26 +93,43 @@ export function levenshtein(a: string, b: string, maxDist = Infinity): number {
 
   // Diferencia de longitud ya supera el umbral → imposible estar dentro del límite
   if (Math.abs(m - n) > maxDist) return maxDist + 1
+  if (m === 0) return n
+  if (n === 0) return m
 
-  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i)
+  // Tres filas rotativas: i-2 (para transposición), i-1 y la actual.
+  let prevPrev: number[] = new Array(n + 1).fill(0)
+  let prev:     number[] = Array.from({ length: n + 1 }, (_, j) => j)
+  let curr:     number[] = new Array(n + 1).fill(0)
 
   for (let i = 1; i <= m; i++) {
-    let prev = dp[0]
-    dp[0] = i
-    let rowMin = i // mínimo valor de la fila actual (para terminación temprana)
+    curr[0] = i
+    let rowMin = i // mínimo de la fila actual (para terminación temprana)
 
     for (let j = 1; j <= n; j++) {
-      const temp = dp[j]
       const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost)
-      prev = temp
-      if (dp[j] < rowMin) rowMin = dp[j]
+      let v = Math.min(
+        prev[j] + 1,         // deleción
+        curr[j - 1] + 1,     // inserción
+        prev[j - 1] + cost,  // sustitución
+      )
+      // Transposición de caracteres adyacentes (Damerau-OSA)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prevPrev[j - 2] + 1)
+      }
+      curr[j] = v
+      if (v < rowMin) rowMin = v
     }
 
-    // Si el menor valor de la fila ya supera maxDist, no puede mejorar
     if (rowMin > maxDist) return maxDist + 1
+
+    // Rotar filas: prevPrev ← prev ← curr ← (buffer reutilizado)
+    const tmp = prevPrev
+    prevPrev = prev
+    prev = curr
+    curr = tmp
   }
-  return dp[n]
+
+  return prev[n]
 }
 
 /**
